@@ -39,11 +39,12 @@
       .clx-statusbar {
         display: flex;
         align-items: center;
-        margin-right: 20px;
+        margin-left: 12px;
         gap: 14px;
         font: 12px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         opacity: .85;
         color: var(--text-primary, #374151);
+        pointer-events: auto;
       }
 
       .clx-statusbar .sb-item {
@@ -66,7 +67,8 @@
   const TIME_ICON = '<svg class="sb-icn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>';
 
   function findStatusContainer(){
-    return document.querySelector('#thread-bottom + div');
+    return document.querySelector('#page-header .flex-1.items-center') ||
+           document.querySelector('#page-header > div:first-child');
   }
 
   function isConversationRoute(){
@@ -76,17 +78,26 @@
   function computeStatus(){
     const id = convIdFromLocation();
     let total = 0;
+    let displayed = 0;
     if (id) {
       try {
         const meta = getMeta(id) || {};
         const flat = getFlat(id) || [];
         total = meta.renderableTotal || flat.length || 0;
+        const inj = getInjected(id) || 0;
+        displayed = (meta.keptRenderableByReact || 0) + inj;
       } catch {}
     }
     if (!total) {
       // Fallback to DOM count if meta not ready
       total = document.querySelectorAll('article[data-testid^="conversation-turn-"]').length || 0;
+      displayed = total;
     }
+    
+    // Safety bounds
+    displayed = Math.min(displayed, total);
+    if (displayed === 0 && total > 0) displayed = total;
+
     let secs = null;
     if (id) {
       const msStr = localStorage.getItem(`cl:last-load-ms:${id}`);
@@ -95,7 +106,7 @@
         secs = Math.round(s * 10) / 10; // 0.1s precision
       }
     }
-    return { id, total, secs };
+    return { id, total, displayed, secs };
   }
 
   function stopStatusTimer(bar){
@@ -128,9 +139,9 @@
         <span class="sb-item" title="Load time">${TIME_ICON}<span class="sb-val sb-seconds">–</span></span>`;
     }
     if (bar.parentElement !== host) {
-      host.prepend(bar);
+      host.appendChild(bar);
     }
-    const { id, total, secs } = computeStatus();
+    const { id, total, displayed, secs } = computeStatus();
     // Reset timer if conversation changed
     if (bar.__convId !== id) {
       stopStatusTimer(bar);
@@ -138,7 +149,7 @@
     }
     const msgEl = bar.querySelector('.sb-messages');
     const secEl = bar.querySelector('.sb-seconds');
-    if (msgEl) msgEl.textContent = String(total);
+    if (msgEl) msgEl.textContent = `${displayed}/${total}`;
     if (secEl) {
       if (secs == null) {
         // Start live timer if not already running
@@ -429,6 +440,17 @@
           else if (bar && first && bar.nextElementSibling !== first) {
             LOG('toolbar:auto-reposition');
             first.parentElement.insertBefore(bar, first);
+          }
+          
+          // Also verify status bar is mounted and in right position
+          if (isConversationRoute()) {
+            const sb = document.getElementById('clx-statusbar');
+            const host = findStatusContainer();
+            if (!sb && host) {
+              renderStatusBar();
+            } else if (sb && host && sb.parentElement !== host) {
+              host.appendChild(sb);
+            }
           }
           // Avoid constant refreshes post-load; status bar updates via events/navigation
         }, 100); // 100ms debounce
